@@ -9,8 +9,11 @@ struct Particle {
 };
 
 const int N_PARTICLES = 200;
-const int PARTICLE_RADIUS = 10;
+const float PARTICLE_RADIUS = 2.0f;
+const float CLICK_ATTRACTION = 0.1f;
 const float PARTICLE_VELOCITY = 2.0f;
+const float CR = 0.8f;
+const float WALL_OFFSET = 0.1f;
 
 float dot(sf::Vector2f& left, sf::Vector2f& right) {
     return left.x * right.x + left.y * right.y;
@@ -18,6 +21,10 @@ float dot(sf::Vector2f& left, sf::Vector2f& right) {
 
 float norm(sf::Vector2f& vec) {
     return std::sqrt(vec.x * vec.x + vec.y * vec.y);
+}
+
+sf::Vector2f scaleVectorToLength(sf::Vector2f& vec, float length) {
+    return length / norm(vec) * vec;
 }
 
 bool collisionDetected(Particle p1, Particle p2) {
@@ -31,8 +38,11 @@ void handleCollision(Particle& p1, Particle& p2) {
     sf::Vector2f v1 = p1.velocity;
     sf::Vector2f v2 = p2.velocity;
 
-    p1.velocity = v1 - dot(v1 - v2, x1 - x2) / std::powf(norm(x1 - x2), 2) * (x1 - x2);
-    p2.velocity = v2 - dot(v2 - v1, x2 - x1) / std::powf(norm(x2 - x1), 2) * (x2 - x1);
+    p1.velocity = v1 - (1 + CR) / 2 * dot(v1 - v2, x1 - x2) / std::powf(norm(x1 - x2), 2) * (x1 - x2);
+    p2.velocity = v2 - (1 + CR) / 2 * dot(v2 - v1, x2 - x1) / std::powf(norm(x2 - x1), 2) * (x2 - x1);
+
+    p1.position += scaleVectorToLength(x1 - x2, PARTICLE_RADIUS);
+    p2.position += scaleVectorToLength(x2 - x1, PARTICLE_RADIUS);
 }
 
 int main()
@@ -85,16 +95,35 @@ int main()
             }
         }
 
+        if (sf::Mouse::isButtonPressed(sf::Mouse::Left)) {
+            sf::Vector2f mousePosition = { (float)sf::Mouse::getPosition().x, (float)sf::Mouse::getPosition().y };
+            for (int i = 0; i < N_PARTICLES; i++) {
+                particles[i].velocity += scaleVectorToLength(mousePosition - particles[i].position, CLICK_ATTRACTION);
+            }
+        }
+
         for (int i = 0; i < N_PARTICLES; i++) {
 
             // Vertical collisions
-            if (particles[i].position.y <= PARTICLE_RADIUS || particles[i].position.y >= (WINDOW_SIZE.y - PARTICLE_RADIUS)) {
-                particles[i].velocity.y = -particles[i].velocity.y;
+            if (particles[i].position.y <= PARTICLE_RADIUS) {
+                particles[i].position.y = PARTICLE_RADIUS + WALL_OFFSET;
+                particles[i].velocity.y = (1 + CR) / 2 * -particles[i].velocity.y;
+            }
+
+            if (particles[i].position.y >= (WINDOW_SIZE.y - PARTICLE_RADIUS)) {
+                particles[i].position.y = WINDOW_SIZE.y - PARTICLE_RADIUS - WALL_OFFSET;
+                particles[i].velocity.y = (1 + CR) / 2 * -particles[i].velocity.y;
             }
 
             // Horizontal collisions
-            if (particles[i].position.x <= PARTICLE_RADIUS || particles[i].position.x >= (WINDOW_SIZE.x - PARTICLE_RADIUS)) {
-                particles[i].velocity.x = -particles[i].velocity.x;
+            if (particles[i].position.x <= PARTICLE_RADIUS) {
+                particles[i].position.x = PARTICLE_RADIUS + WALL_OFFSET;
+                particles[i].velocity.x = (1 + CR) / 2 * -particles[i].velocity.x;
+            }
+
+            if (particles[i].position.x >= (WINDOW_SIZE.x - PARTICLE_RADIUS)) {
+                particles[i].position.x = WINDOW_SIZE.x - PARTICLE_RADIUS - WALL_OFFSET;
+                particles[i].velocity.x = (1 + CR) / 2 * -particles[i].velocity.x;
             }
 
             // Particle-to-particle collisions
