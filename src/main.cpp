@@ -1,5 +1,26 @@
 #include <SFML/Graphics.hpp>
 #include <iostream>
+#include <set>
+
+const int N_PARTICLES = 5000;
+
+// Coefficient of restitution
+float CR = 0.75f;
+
+// Strength of attraction on LMB click
+float CLICK_ATTRACTION = 0.2f;
+
+// Gravitational force
+float GRAVITY = 0.5f;
+
+const float PARTICLE_RADIUS = 2.0f;
+const float PARTICLE_VELOCITY = 0.0f;
+
+sf::Vector2u const WINDOW_SIZE = { 1920, 1080 };
+sf::Vector2u const SIMULATION_SIZE = { 1920, 880 };
+
+const int gridDimX = 500;
+const int gridDimY = 500;
 
 typedef struct Particle Particle;
 
@@ -108,19 +129,6 @@ struct Slider {
     }
 };
 
-const int N_PARTICLES = 200;
-const float PARTICLE_RADIUS = 10.0f;
-const float PARTICLE_VELOCITY = 2.0f;
-
-// Coefficient of restitution
-float CR = 0.75f;
-
-// Strength of attraction on LMB click
-float CLICK_ATTRACTION = 0.2f;
-
-sf::Vector2u const WINDOW_SIZE = { 1920, 1080 };
-sf::Vector2u const SIMULATION_SIZE = { 1920, 880 };
-
 float dot(sf::Vector2f& left, sf::Vector2f& right) {
     return left.x * right.x + left.y * right.y;
 }
@@ -133,7 +141,7 @@ sf::Vector2f scaleVectorToLength(sf::Vector2f& vec, float length) {
     return length / norm(vec) * vec;
 }
 
-bool collisionDetected(Particle p1, Particle p2) {
+bool collisionDetected(Particle& p1, Particle& p2) {
     return norm(p1.position - p2.position) <= 2 * PARTICLE_RADIUS;
 }
 
@@ -144,15 +152,28 @@ void handleCollision(Particle& p1, Particle& p2) {
     sf::Vector2f v1 = p1.velocity;
     sf::Vector2f v2 = p2.velocity;
 
-    p1.velocity = v1 - (1 + CR) / 2 * dot(v1 - v2, x1 - x2) / std::powf(norm(x1 - x2), 2) * (x1 - x2);
-    p2.velocity = v2 - (1 + CR) / 2 * dot(v2 - v1, x2 - x1) / std::powf(norm(x2 - x1), 2) * (x2 - x1);
+    p1.velocity = v1 - (1 + CR) / 2 * dot(v1 - v2, x1 - x2) / std::powf(std::max(norm(x1 - x2), 1e-6f), 2) * (x1 - x2);
+    p2.velocity = v2 - (1 + CR) / 2 * dot(v2 - v1, x2 - x1) / std::powf(std::max(norm(x2 - x1), 1e-6f), 2) * (x2 - x1);
 
-    p1.position += scaleVectorToLength(x1 - x2, (2 * PARTICLE_RADIUS - norm(x1 - x2)) / 2.0f);
-    p2.position += scaleVectorToLength(x2 - x1, (2 * PARTICLE_RADIUS - norm(x2 - x1)) / 2.0f);
+    if (x1.x == x2.x && x1.y == x2.y) {
+        p1.position += sf::Vector2f{ 1e-2f, 1e-2f };
+        p2.position -= sf::Vector2f{ 1e-2f, 1e-2f };
+    }
+    else {
+        p1.position += scaleVectorToLength(x1 - x2, (2 * PARTICLE_RADIUS - norm(x1 - x2)) / 2.0f);
+        p2.position += scaleVectorToLength(x2 - x1, (2 * PARTICLE_RADIUS - norm(x2 - x1)) / 2.0f);
+    }
+}
+
+std::pair<int, int> getGridIndices(Particle& p) {
+    int x = std::min((int)(p.position.x / ((float) SIMULATION_SIZE.x / gridDimX)), gridDimX - 1);
+    int y = std::min((int)(p.position.y / ((float) SIMULATION_SIZE.y / gridDimY)), gridDimY - 1);
+
+    return { x, y };
 }
 
 int main()
-{   
+{
     // Initialize SFML window
     auto window = sf::RenderWindow{ { WINDOW_SIZE.x, WINDOW_SIZE.y }, "CMake SFML Project" };
     window.setFramerateLimit(144);
@@ -167,15 +188,16 @@ int main()
     // Sliders for modifiable parameters
     Slider crSlider = Slider(&window, font, sf::Vector2f{ 200.0f, 930.0f }, "Coefficient of restitution", &CR, 0.5f, 1.0f);
     Slider caSlider = Slider(&window, font, sf::Vector2f{ 200.0f, 980.0f }, "Click attraction", &CLICK_ATTRACTION, 0.0f, 0.5f);
+    Slider gravSlider = Slider(&window, font, sf::Vector2f{ 200.0f, 1030.0f }, "Gravitational force", &GRAVITY, 0.0f, 1.0f);
 
-    Slider sliders[] = { crSlider, caSlider };
+    std::vector<Slider> sliders = { crSlider, caSlider, gravSlider };
 
     // Random seed
     std::srand(time(NULL));
 
     // Initialize particles
-    Particle particles[N_PARTICLES];
-    sf::CircleShape shapes[N_PARTICLES];
+    std::vector<Particle> particles{};
+    std::vector<sf::CircleShape> shapes{};
 
     for (int i = 0; i < N_PARTICLES; i++) {
         // Generate random position
@@ -188,10 +210,10 @@ int main()
         float vel_y = std::sin(alpha) * PARTICLE_VELOCITY;
 
         // Create the particle object
-        particles[i] = Particle{ {pos_x, pos_y}, {vel_x, vel_y} };
+        particles.push_back(Particle{ {pos_x, pos_y}, {vel_x, vel_y} });
 
         // Create a corresponding shape
-        shapes[i] = sf::CircleShape(PARTICLE_RADIUS);
+        shapes.push_back(sf::CircleShape(PARTICLE_RADIUS));
         shapes[i].setFillColor(sf::Color(255, 28, 206));
         shapes[i].setPosition(particles[i].position.x, particles[i].position.y);
 
@@ -199,6 +221,24 @@ int main()
         window.draw(shapes[i]);
     }
 
+    // Initialize optimization containers: grid & map
+    std::vector<std::vector<std::set<int>>> particleGrid{};
+    std::map<int, std::pair<int, int>> particleMap{};
+
+    for (int i = 0; i < gridDimY; i++) {
+        particleGrid.push_back({});
+        for (int j = 0; j < gridDimX; j++) {
+            particleGrid[i].push_back(std::set<int>{});
+        }
+    }
+    
+    for (int i = 0; i < N_PARTICLES; i++) {
+        std::pair<int, int> indices = getGridIndices(particles[i]);
+        particleGrid[indices.second][indices.first].insert(i);
+        particleMap[i] = indices;
+    }
+    
+    // Mainloop
     while (window.isOpen())
     {
         for (auto event = sf::Event{}; window.pollEvent(event);)
@@ -245,31 +285,50 @@ int main()
             // Vertical collisions
             if (particles[i].position.y < PARTICLE_RADIUS) {
                 particles[i].position.y = PARTICLE_RADIUS;
-                particles[i].velocity.y = (1 + CR) / 2 * -particles[i].velocity.y;
+                particles[i].velocity.y = (1 + CR) / 2 * - particles[i].velocity.y;
             }
 
             if (particles[i].position.y > (SIMULATION_SIZE.y - PARTICLE_RADIUS)) {
                 particles[i].position.y = SIMULATION_SIZE.y - PARTICLE_RADIUS;
-                particles[i].velocity.y = (1 + CR) / 2 * -particles[i].velocity.y;
+                particles[i].velocity.y = (1 + CR) / 2 * - particles[i].velocity.y;
             }
 
             // Horizontal collisions
             if (particles[i].position.x < PARTICLE_RADIUS) {
                 particles[i].position.x = PARTICLE_RADIUS;
-                particles[i].velocity.x = (1 + CR) / 2 * -particles[i].velocity.x;
+                particles[i].velocity.x = (1 + CR) / 2 * - particles[i].velocity.x;
             }
 
             if (particles[i].position.x > (SIMULATION_SIZE.x - PARTICLE_RADIUS)) {
                 particles[i].position.x = SIMULATION_SIZE.x - PARTICLE_RADIUS;
-                particles[i].velocity.x = (1 + CR) / 2 * -particles[i].velocity.x;
+                particles[i].velocity.x = (1 + CR) / 2 * - particles[i].velocity.x;
+            }
+
+            // Update particleGrid and particleMap
+            std::pair<int, int> indices = getGridIndices(particles[i]);
+
+            if (indices.first != particleMap[i].first ||
+                indices.second != particleMap[i].second) {
+                // If particle moved to different grid cell, we update it
+                std::pair<int, int> oldIndices = particleMap[i];
+                particleGrid[oldIndices.second][oldIndices.first].erase(i);
+
+                particleMap[i] = indices;
+                particleGrid[indices.second][indices.first].insert(i);
             }
 
             // Particle-to-particle collisions
-            for (int j = 0; j < i; j++) {
-                if (collisionDetected(particles[i], particles[j])) {
-                    handleCollision(particles[i], particles[j]);
+            if (particleGrid[indices.second][indices.first].size() > 1) {
+                for (int j : particleGrid[indices.second][indices.first]) {
+                    if (j < i && collisionDetected(particles[i], particles[j])) {
+                        handleCollision(particles[i], particles[j]);
+                    }
                 }
             }
+            
+
+            // Gravitational force
+            particles[i].velocity.y += 0.1 * GRAVITY;
         }
 
         for (int i = 0; i < N_PARTICLES; i++) {
