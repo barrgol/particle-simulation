@@ -1,4 +1,7 @@
-https://github.com/user-attachments/assets/09c21396-8c9d-4f1a-a710-67069b139b87
+https://github.com/user-attachments/assets/d7477129-a16a-44c6-9968-cef9debf3e53
+
 
 # TODO:
-- [ ] Current collision algorithm is still a bit bugged, causing the particles to cluster together
+- [x] Current collision algorithm is still a bit bugged, causing the particles to cluster together
+- [ ] Position overcorrection causes flickering and constant vibrations at rest
+- [ ] Clustering still can sometimes occur due to setting low-velocity particles to be at rest
