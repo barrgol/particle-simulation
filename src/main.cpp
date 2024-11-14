@@ -2,7 +2,7 @@
 #include <iostream>
 #include <set>
 
-const int N_PARTICLES = 5000;
+const int N_PARTICLES = 400;
 
 // Coefficient of restitution
 float CR = 0.75f;
@@ -11,16 +11,22 @@ float CR = 0.75f;
 float CLICK_ATTRACTION = 0.2f;
 
 // Gravitational force
-float GRAVITY = 0.5f;
+float GRAVITY = 0.2f;
 
-const float PARTICLE_RADIUS = 2.0f;
-const float PARTICLE_VELOCITY = 0.0f;
+const float PARTICLE_RADIUS = 8.0f;    // Size of each particle
+const float PARTICLE_VELOCITY = 5.0f;    // Size of each particle
+const float COLLISION_EPSILON = 0.05f;  // Small number for correction of collision detection
+const float VELOCITY_THRESHOLD = 0.2f;  // Threshold to consider particles at rest
+const float GROUND_DAMPENING = 0.7f;    // Extra velocity dampening when particles hit the gorund
 
-sf::Vector2u const WINDOW_SIZE = { 1920, 1080 };
-sf::Vector2u const SIMULATION_SIZE = { 1920, 880 };
+sf::Vector2u const WINDOW_SIZE = { sf::VideoMode::getDesktopMode().width, sf::VideoMode::getDesktopMode().height };
+sf::Vector2f const WINDOW_SIZE_f = static_cast<sf::Vector2f>(WINDOW_SIZE);
 
-const int gridDimX = 500;
-const int gridDimY = 500;
+sf::Vector2u const SIMULATION_SIZE = { sf::VideoMode::getDesktopMode().width, sf::VideoMode::getDesktopMode().height - 300u };
+sf::Vector2f const SIMULATION_SIZE_f = static_cast<sf::Vector2f>(SIMULATION_SIZE);
+
+const int gridDimX = 32;
+const int gridDimY = 16;
 
 typedef struct Particle Particle;
 
@@ -142,7 +148,7 @@ sf::Vector2f scaleVectorToLength(sf::Vector2f& vec, float length) {
 }
 
 bool collisionDetected(Particle& p1, Particle& p2) {
-    return norm(p1.position - p2.position) <= 2 * PARTICLE_RADIUS;
+    return norm(p1.position - p2.position) <= (2 * PARTICLE_RADIUS + COLLISION_EPSILON);
 }
 
 void handleCollision(Particle& p1, Particle& p2) {
@@ -152,16 +158,28 @@ void handleCollision(Particle& p1, Particle& p2) {
     sf::Vector2f v1 = p1.velocity;
     sf::Vector2f v2 = p2.velocity;
 
-    p1.velocity = v1 - (1 + CR) / 2 * dot(v1 - v2, x1 - x2) / std::powf(std::max(norm(x1 - x2), 1e-6f), 2) * (x1 - x2);
-    p2.velocity = v2 - (1 + CR) / 2 * dot(v2 - v1, x2 - x1) / std::powf(std::max(norm(x2 - x1), 1e-6f), 2) * (x2 - x1);
+    // Relative velocity along the collision normal
+    sf::Vector2f collisionVector = x1 - x2;
+    float distance = norm(collisionVector);
 
-    if (x1.x == x2.x && x1.y == x2.y) {
-        p1.position += sf::Vector2f{ 1e-2f, 1e-2f };
-        p2.position -= sf::Vector2f{ 1e-2f, 1e-2f };
-    }
-    else {
-        p1.position += scaleVectorToLength(x1 - x2, (2 * PARTICLE_RADIUS - norm(x1 - x2)) / 2.0f);
-        p2.position += scaleVectorToLength(x2 - x1, (2 * PARTICLE_RADIUS - norm(x2 - x1)) / 2.0f);
+    sf::Vector2f collisionNormal = collisionVector / std::max(distance, 1e-6f); // std::max(distance, 1e-6f) handles x1 == x2 case
+    float relativeVelocity = dot(v1 - v2, collisionNormal);
+
+    // Ensure that particles are not moving away from each other
+    if (relativeVelocity < 0) {
+        float impulse = (1 + CR) * relativeVelocity / 2;
+        p1.velocity -= impulse * collisionNormal;
+        p2.velocity += impulse * collisionNormal;
+
+        // Position correction - separate the particles after collision
+        float overlap = (2 * PARTICLE_RADIUS - distance) * 0.51f; // 0.51f to ensure separation
+        if (norm(p1.velocity) > VELOCITY_THRESHOLD) {
+            p1.position += overlap * collisionNormal;
+        }
+
+        if (norm(p2.velocity) > VELOCITY_THRESHOLD) {
+            p2.position -= overlap * collisionNormal;
+        }
     }
 }
 
@@ -175,7 +193,7 @@ std::pair<int, int> getGridIndices(Particle& p) {
 int main()
 {
     // Initialize SFML window
-    auto window = sf::RenderWindow{ { WINDOW_SIZE.x, WINDOW_SIZE.y }, "CMake SFML Project" };
+    auto window = sf::RenderWindow{ { WINDOW_SIZE.x, WINDOW_SIZE.y }, "CMake SFML Project", sf::Style::Fullscreen | sf::Style::Close };
     window.setFramerateLimit(144);
 
     // Load the font
@@ -186,9 +204,9 @@ int main()
     }
 
     // Sliders for modifiable parameters
-    Slider crSlider = Slider(&window, font, sf::Vector2f{ 200.0f, 930.0f }, "Coefficient of restitution", &CR, 0.5f, 1.0f);
-    Slider caSlider = Slider(&window, font, sf::Vector2f{ 200.0f, 980.0f }, "Click attraction", &CLICK_ATTRACTION, 0.0f, 0.5f);
-    Slider gravSlider = Slider(&window, font, sf::Vector2f{ 200.0f, 1030.0f }, "Gravitational force", &GRAVITY, 0.0f, 1.0f);
+    Slider crSlider = Slider(&window, font, sf::Vector2f{ SIMULATION_SIZE_f.x / 2, SIMULATION_SIZE_f.y + 50.0f }, "Coefficient of restitution", &CR, 0.5f, 1.0f);
+    Slider caSlider = Slider(&window, font, sf::Vector2f{ SIMULATION_SIZE_f.x / 2, SIMULATION_SIZE_f.y + 100.0f }, "Click attraction", &CLICK_ATTRACTION, 0.0f, 0.4f);
+    Slider gravSlider = Slider(&window, font, sf::Vector2f{ SIMULATION_SIZE_f.x / 2, SIMULATION_SIZE_f.y + 150.0f }, "Gravitational force", &GRAVITY, 0.0f, 1.0f);
 
     std::vector<Slider> sliders = { crSlider, caSlider, gravSlider };
 
@@ -205,16 +223,16 @@ int main()
         float pos_y = std::rand() % int(SIMULATION_SIZE.y - PARTICLE_RADIUS);
 
         // Generate random initial velocity
-        float alpha = std::rand() % 360;
+        /*float alpha = std::rand() % 360;
         float vel_x = std::cos(alpha) * PARTICLE_VELOCITY;
-        float vel_y = std::sin(alpha) * PARTICLE_VELOCITY;
+        float vel_y = std::sin(alpha) * PARTICLE_VELOCITY;*/
 
         // Create the particle object
-        particles.push_back(Particle{ {pos_x, pos_y}, {vel_x, vel_y} });
+        particles.push_back(Particle{ {pos_x, pos_y}, {0.0f, 0.0f} });
 
         // Create a corresponding shape
         shapes.push_back(sf::CircleShape(PARTICLE_RADIUS));
-        shapes[i].setFillColor(sf::Color(255, 28, 206));
+        shapes[i].setFillColor(sf::Color{ 150, 0, 150 });
         shapes[i].setPosition(particles[i].position.x, particles[i].position.y);
 
         // Draw that shape to the screen
@@ -278,34 +296,44 @@ int main()
 
         for (int i = 0; i < N_PARTICLES; i++) {
 
+            Particle& p = particles[i];
+
+            // Gravitational force
+            p.velocity.y += 0.04 * GRAVITY;
+
             // Calculate new position
-            particles[i].position.x += particles[i].velocity.x;
-            particles[i].position.y += particles[i].velocity.y;
+            p.position.x += p.velocity.x;
+            p.position.y += p.velocity.y;
 
             // Vertical collisions
-            if (particles[i].position.y < PARTICLE_RADIUS) {
-                particles[i].position.y = PARTICLE_RADIUS;
-                particles[i].velocity.y = (1 + CR) / 2 * - particles[i].velocity.y;
+            if (p.position.y < PARTICLE_RADIUS) {
+                p.position.y = PARTICLE_RADIUS * 1.01f;
+                p.velocity.y = (1 + CR) / 2 * (- p.velocity.y);
             }
 
-            if (particles[i].position.y > (SIMULATION_SIZE.y - PARTICLE_RADIUS)) {
-                particles[i].position.y = SIMULATION_SIZE.y - PARTICLE_RADIUS;
-                particles[i].velocity.y = (1 + CR) / 2 * - particles[i].velocity.y;
+            if (p.position.y > (SIMULATION_SIZE.y - PARTICLE_RADIUS)) {
+                p.position.y = SIMULATION_SIZE.y - PARTICLE_RADIUS;
+                p.velocity.y = 0.7 * (1 + CR) / 2 * (- p.velocity.y);
+
+                // Threshold to stop small vibrations near the ground
+                if (norm(p.velocity) < VELOCITY_THRESHOLD) {
+                    p.velocity = { 0.0f, 0.0f };
+                }
             }
 
             // Horizontal collisions
-            if (particles[i].position.x < PARTICLE_RADIUS) {
-                particles[i].position.x = PARTICLE_RADIUS;
-                particles[i].velocity.x = (1 + CR) / 2 * - particles[i].velocity.x;
+            if (p.position.x < PARTICLE_RADIUS) {
+                p.position.x = PARTICLE_RADIUS * 1.01f;
+                p.velocity.x = (1 + CR) / 2 * (- p.velocity.x);
             }
 
-            if (particles[i].position.x > (SIMULATION_SIZE.x - PARTICLE_RADIUS)) {
-                particles[i].position.x = SIMULATION_SIZE.x - PARTICLE_RADIUS;
-                particles[i].velocity.x = (1 + CR) / 2 * - particles[i].velocity.x;
+            if (p.position.x > (SIMULATION_SIZE.x - PARTICLE_RADIUS)) {
+                p.position.x = SIMULATION_SIZE.x - PARTICLE_RADIUS * 1.01f;
+                p.velocity.x = (1 + CR) / 2 * (- p.velocity.x);
             }
 
             // Update particleGrid and particleMap
-            std::pair<int, int> indices = getGridIndices(particles[i]);
+            std::pair<int, int> indices = getGridIndices(p);
 
             if (indices.first != particleMap[i].first ||
                 indices.second != particleMap[i].second) {
@@ -320,15 +348,11 @@ int main()
             // Particle-to-particle collisions
             if (particleGrid[indices.second][indices.first].size() > 1) {
                 for (int j : particleGrid[indices.second][indices.first]) {
-                    if (j < i && collisionDetected(particles[i], particles[j])) {
-                        handleCollision(particles[i], particles[j]);
+                    if (j < i && collisionDetected(p, particles[j])) {
+                        handleCollision(p, particles[j]);
                     }
                 }
             }
-            
-
-            // Gravitational force
-            particles[i].velocity.y += 0.1 * GRAVITY;
         }
 
         for (int i = 0; i < N_PARTICLES; i++) {
